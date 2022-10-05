@@ -8,6 +8,7 @@ import random
 from PIL import Image
 from PIL import ImageFilter
 
+
 class CocoDataLoader():
 
     def __init__(self,classes=['person','car'],split='train',number_of_samples = 5000,batch_size = 32,shuffle = True,input_dim = (512,512),stride_scale = 4):
@@ -67,13 +68,17 @@ class CocoDataLoader():
         images_batch = np.array(images_batch)
         self.channel_size = images_batch.shape[-1]
 
+
         self.generate_gt_heatmap(annotation_batch,org_size)
-        self.apply_gaussian_filter()
+        
         self.generate_gt_offset(annotation_batch,org_size)
         self.generate_gt_bbox_size(annotation_batch,org_size)
+        self.apply_gaussian_filter_v2()
 
+        self.generate_gt_bbox(images_batch)
         self.heatmap = rearrange(self.heatmap,'b h w c -> b c h w').astype(np.float32)
         self.offset = rearrange(self.offset,'b h w c -> b c h w').astype(np.float32)
+        self.bbox_size/=np.array([self.output_height,self.output_width])
         self.bbox_size = rearrange(self.bbox_size,'b h w c  -> b c h w').astype(np.float32)
         return rearrange(images_batch,'b h w c -> b c h w').astype(np.float32)/255,self.heatmap,self.offset,self.bbox_size
 
@@ -93,7 +98,7 @@ class CocoDataLoader():
 
                 self.heatmap[i][center_y][center_x][label_id]=255
 
-    def apply_gaussian_filter(self):
+    def apply_gaussian_filter_v1(self):
 
 
         for i in range(self.heatmap.shape[0]):
@@ -101,6 +106,30 @@ class CocoDataLoader():
                 # image = Image.fromarray(self.heatmap[i,:,:,j].reshape([self.output_height,self.output_width,1]))
                 img = cv2.blur(self.heatmap[i,:,:,j].reshape([self.output_height,self.output_width,1]),(10,10))
                 self.heatmap[i,:,:,j] = img.reshape([self.output_height,self.output_width])
+
+    def apply_gaussian_filter_v2(self,filter=(3,3)):
+
+        for i in range(self.heatmap.shape[0]):
+            for j in range(len(self.classes)):
+                indices = np.where(self.heatmap[i,:,:,j]==255)
+                if type(indices)==tuple:
+
+                    size = indices[0].shape[0]
+                    for k in range(size):
+                        point = (indices[0][k],indices[1][k])
+                        bb_size = self.bbox_size[i,point[0],point[1]]
+                        if bb_size[0]==0. or bb_size[1]==0.:
+                            continue
+                        for m in range(max(point[0]-int(bb_size[0]/filter[0]),0),min(point[0]+int(bb_size[0]/filter[0])+1,self.heatmap.shape[1])):
+                            for n in range(max(point[1]-int(bb_size[1]/filter[1]),0),min(point[1]+int(bb_size[1]/filter[1])+1,self.heatmap.shape[2])):
+                                sub = int((((m - point[0])*(255/(bb_size[0]/filter[0])))**2+((n - point[1])*(255/(bb_size[1]/filter[1])))**2)**0.5)
+
+                                self.heatmap[i,m,n,j]=max(255-sub,self.heatmap[i,m,n,j])
+                                
+
+
+
+
 
     def generate_gt_offset(self,annotation_batch,org_size):
 
@@ -130,13 +159,22 @@ class CocoDataLoader():
                 bbox = annotation_batch[i][j]['bbox']
                 label = annotation_batch[i][j]['label']
                 org_bbox = [bbox[0]*self.input_dim[1],bbox[1]*self.input_dim[0],bbox[2]*self.input_dim[1],bbox[3]*self.input_dim[0]]
-                output_bbox =  (np.array(org_bbox,dtype=np.float32)/self.stride_scale).astype(np.float32)
+                output_bbox =  (np.array(org_bbox,dtype=np.float32)/self.stride_scale).astype(np.int32)
                 output_center_x = int(output_bbox[0]+(output_bbox[2]/2))
                 output_center_y = int(output_bbox[1]+(output_bbox[3]/2))
                 label_id = self.label_map[label]
-                self.bbox_size[i][output_center_y][output_center_x][0]=output_bbox[2]/self.output_width
-                self.bbox_size[i][output_center_y][output_center_x][1]=output_bbox[3]/self.output_height 
-                
+                if output_bbox[3]<=0. or output_bbox[2]<=0.:
+                    continue
+                self.bbox_size[i][output_center_y][output_center_x][0]=output_bbox[3]
+                self.bbox_size[i][output_center_y][output_center_x][1]=output_bbox[2]
+
+    def generate_gt_bbox(self,image_batch):
+
+        for i in range(image_batch.shape[0]):
+            cv2.imwrite('gt_img_'+str(i)+'.jpg',image_batch[i])
+            for j in range(len(self.classes)):
+                cv2.imwrite('hm_'+str(i)+'_'+str(j)+'.jpg',self.heatmap[i,:,:,j])
+            
 
     def on_epoch_ends(self):
 

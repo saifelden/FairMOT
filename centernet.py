@@ -11,7 +11,7 @@ import sys
 from glob import glob
 from einops import rearrange 
 class CenterNet():
-    def __init__(self,classes=['person','car','bicycle'],batch_size = 32,learning_rate =0.001,save_epochs=2,inference=False):
+    def __init__(self,classes=['person','car','bicycle'],batch_size = 32,learning_rate =0.001,save_epochs=2,mode='train'):
 
         self.detection_model = BackBone().to('cuda')
 
@@ -24,8 +24,9 @@ class CenterNet():
         self.params = list(self.detection_model.parameters())
         self.params.extend([self.ht_weight_loss,self.offset_weight_loss,self.bbsize_weight_loss])
         self.optimizer = adam(list(self.detection_model.parameters()),lr=learning_rate)
-        if not inference:
+        if mode=='train':
             self.train_dl = CocoDataLoader(classes=classes,split='train',number_of_samples = 5000,batch_size = batch_size)
+        elif mode =='test':
             self.test_dl = CocoDataLoader(classes=classes,split='validation',number_of_samples = 1000,batch_size = batch_size)
         self.model_name = ''
         self.iteration_num=0
@@ -123,12 +124,7 @@ class CenterNet():
 if __name__ =='__main__':
 
     action = sys.argv[1]
-    model = CenterNet()
-    if action=='predict':
-        import ipdb;ipdb.set_trace()
-        model = CenterNet(inference=True)
-    else:
-        model = CenterNet()
+    model = CenterNet(mode = action)   
     checkpoint = sys.argv[2]
     if checkpoint!= '-1':
         model.load_saved_model(checkpoint)
